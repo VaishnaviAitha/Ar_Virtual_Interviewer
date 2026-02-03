@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AR Virtual Interviewer (Markerless)</title>
+
+  <!-- A-Frame -->
+  <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+
+  <!-- AR.js -->
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+    #ui-overlay {
+      position: fixed;
+      bottom: 20px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      z-index: 1000;
+    }
+    #status {
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 20px;
+      display: inline-block;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+<a-scene
+  embedded
+  arjs="sourceType: webcam; debugUIEnabled: false;"
+  vr-mode-ui="enabled: false">
+
+  <!-- Lights -->
+  <a-light type="ambient" intensity="2"></a-light>
+  <a-light type="directional" position="0 3 2" intensity="2"></a-light>
+
+  <!-- Camera -->
+  <a-entity camera></a-entity>
+
+  <!-- Model always visible in front of camera -->
+  <a-entity
+    id="interviewer"
+    gltf-model="/models/interviewer.glb"
+    position="0 -0.5 -2"
+    rotation="0 0 0"
+    scale="4 4 4">
+  </a-entity>
+
+</a-scene>
+
+<!-- UI -->
+<div id="ui-overlay">
+  <div id="status">AR Interviewer Ready</div>
+  <div>
+    <button id="start-btn" onclick="startInterview()">Start Interview</button>
+    <button id="record-btn" onclick="toggleRecording()" disabled>🎤 Respond</button>
+  </div>
+</div>
+
+<audio id="question-audio"></audio>
+
+<script>
+const SERVER_URL = window.location.origin;
+
+let isRecording = false;
+let mediaRecorder;
+let audioChunks = [];
+
+const statusEl = document.getElementById('status');
+const questionEl = document.getElementById('question-text');
+const startBtn = document.getElementById('start-btn');
+const recordBtn = document.getElementById('record-btn');
+const audioEl = document.getElementById('question-audio');
+
+async function startInterview() {
+  statusEl.textContent = 'Starting interview...';
+  const res = await fetch(`${SERVER_URL}/start`);
+  const data = await res.json();
+  playAudio(data.audio);
+}
+
+function playAudio(base64Audio) {
+  statusEl.textContent = '🗣️ ARAI is speaking...';
+  audioEl.src = `data:audio/mp3;base64,${base64Audio}`;
+  audioEl.play();
+
+  audioEl.onended = () => {
+    statusEl.textContent = '🎤 Your turn to speak';
+    recordBtn.disabled = false;
+  };
+}
+
+async function toggleRecording() {
+  if (!isRecording) startRecording();
+  else stopRecording();
+}
+
+async function startRecording() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaRecorder = new MediaRecorder(stream);
+  audioChunks = [];
+
+  mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+  mediaRecorder.onstop = sendAudio;
+
+  mediaRecorder.start();
+  isRecording = true;
+  recordBtn.textContent = '⏹️ Stop';
+  statusEl.textContent = 'Recording...';
+
+  setTimeout(stopRecording, 6000);
+}
+
+function stopRecording() {
+  if (!isRecording) return;
+  mediaRecorder.stop();
+  isRecording = false;
+  recordBtn.textContent = '🎤 Respond';
+  recordBtn.disabled = true;
+}
+
+async function sendAudio() {
+  const blob = new Blob(audioChunks, { type: 'audio/webm' });
+  const reader = new FileReader();
+
+  reader.onloadend = async () => {
+    const base64 = reader.result.split(',')[1];
+    const res = await fetch(`${SERVER_URL}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: base64 })
+    });
+
+    const data = await res.json();
+    playAudio(data.audio);
+  };
+
+  reader.readAsDataURL(blob);
+}
+</script>
+
+</body>
+</html>
